@@ -1,0 +1,92 @@
+-----------  	SPECIALTY OVERLAP ANALYSIS  		---------------------
+----------- 	Code for 'Mkt NBRx CMH'  tab	---------------------
+----------- 	Last updated by: SoumyaRanjan Kar	----------------------
+----------- 	Last updated on: 08/11/2025			----------------------
+
+
+with cte_mlr_prsn as
+(
+	select 'CMH' as bu,'ZEPBOUND' as brand, a.prsn_id, ly_mjr_spclty_cd, ly_mjr_spclty_desc_txt
+	from sas.customer a
+	join sas.bia_hcp_consent_attributes b
+	on a.prsn_id = b.prsn_id and upper(mlr_app_brand_prim_spec) like '%ZEPBOUND%'
+	union
+	select 'CMH' as bu,'MOUNJARO' as brand, a.prsn_id, ly_mjr_spclty_cd, ly_mjr_spclty_desc_txt
+	from sas.customer a
+	join sas.bia_hcp_consent_attributes b
+	on a.prsn_id = b.prsn_id and upper(mlr_app_brand_prim_spec) like '%MOUNJARO%'
+)
+,
+cte_target as
+(
+	select distinct a.bu, a.brand, brand_target_segment, ly_mjr_spclty_cd, ly_mjr_spclty_desc_txt, prsn_id
+	from cte_mlr_prsn a join bia.bia_omnichannel_target b
+	on a.prsn_id = b.lilly_prsn_id and upper(a.brand) = upper(b.brand)
+)
+,
+cte_po_prsn as
+(
+	select distinct a.prsn_id as po_prsn_id, US8E_prsn_id, a.brand
+	from cte_mlr_prsn a
+	join
+	(
+		select distinct
+		customer_id,
+		'' as US8E_prsn_id,
+		--      case when sales_force_code = 'US8E' then customer_id else null end as US8E_prsn_id,
+		case when product_id = 'US_708122' then 'ZEPBOUND' when product_id = 'US_613009_DS057' then 'MOUNJARO' end as brand
+		from aads_prod.mlops_cats_dynamic_targeting_master_po
+		where actual_count > 0 and product_id in ('US_708122','US_613009_DS057') and po_start_date =(select max(po_start_date) from aads_prod.mlops_cats_dynamic_targeting_master_po)
+	) b
+	on a.prsn_id = b.customer_id and upper(a.brand) = upper(b.brand)
+),
+cte_mkt_nbrx_prsn as
+(
+	select 'CMH' as bu, 'ZEPBOUND' as brand_name, 'Injectables OMM' as Mkt_name ,prsn_id, sum(new_to_brand_flag) as mkt_nbrx
+	from apld_ex.laad_obesity_masterdata
+	where service_date between '2024-04-01' and '2025-03-31' and class = 'INJ_AOM'
+	group by 1,2,3,4
+	union
+	select 'CMH' as bu, 'MOUNJARO' as brand_name, 'GLP Injectables' as mkt_name, prsn_id, sum(new_to_brand_flag) as mkt_nbrx
+	from apld_ex.laad_diabetes_masterdata
+	where service_date between '2024-04-01' and '2025-03-31' and glp_inj_flag = '1'
+	group by 1,2,3,4
+),
+cte_mlrhcp_nbrx_joined as
+(
+	select a.bu as bu, a.brand as brand, coalesce(brand_target_segment,'UNSEGMENTED') as segment,
+	a.ly_mjr_spclty_cd as spec_cd, a.ly_mjr_spclty_desc_txt as spec_desc,
+	count(distinct a.prsn_id) as mlr_apv_hcp_ct,
+	count(distinct c.prsn_id) as target_hcp_ct,
+	count(distinct d.po_prsn_id) as po_prsn_ct,
+	count(distinct d.US8E_prsn_id) as sf_US8E_po_prsn_ct,
+	coalesce(sum(mkt_nbrx),0) as mkt_nbrx_12mth_ct
+	from cte_mlr_prsn a
+	left join cte_mkt_nbrx_prsn b
+		on a.prsn_id = b.prsn_id and upper(a.brand) = upper(b.brand_name)
+	left join cte_target c
+		on a.prsn_id = c.prsn_id and upper(a.brand) = upper(c.brand)
+	left join cte_po_prsn d
+		on a.prsn_id = d.po_prsn_id and upper(a.brand) = upper(d.brand)
+	group by 1,2,3,4,5
+)
+select 
+bu,
+case 
+	when brand = 'MOUNJARO' then 'GLP Inj' 
+	when brand = 'ZEPBOUND' then 'Injectable AOM' 
+end as market,
+brand, spec_cd, spec_desc,'' as sf_aprvd_spec_flag ,segment,
+mlr_apv_hcp_ct, target_hcp_ct, mkt_nbrx_12mth_ct,
+cast(po_prsn_ct as float)/cast(mlr_apv_hcp_ct as float) as po_mlr_prsn_pct,
+cast(sf_US8E_po_prsn_ct as float)/cast(mlr_apv_hcp_ct as float) as sf_US8E_po_mlr_prsn_pct,
+coalesce(cast(mkt_nbrx_12mth_ct as float)/cast(nullif((sum(mkt_nbrx_12mth_ct) over(partition by bu, brand, spec_cd, spec_desc)),0) as float),0) as nbrx_split_by_seg_pct,
+coalesce(cast(mkt_nbrx_12mth_ct as float)/cast(nullif((sum(mkt_nbrx_12mth_ct) over(partition by bu, brand, segment)),0) as float),0) as nbrx_split_by_spec_pct
+from cte_mlrhcp_nbrx_joined
+order by bu, brand, spec_cd, mkt_nbrx_12mth_ct desc
+
+
+
+
+
+
