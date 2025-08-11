@@ -1,0 +1,134 @@
+-----------  	SPECIALTY OVERLAP ANALYSIS  		---------------------
+----------- 	Code for 'Mkt NBRx All BUs'  tab	---------------------
+----------- 	Last updated by: SoumyaRanjan Kar	----------------------
+----------- 	Last updated on: 08/11/2025			----------------------
+
+
+with cte_mlr_prsn as
+	(
+		select 'CMH' as bu,'ZEPBOUND' as brand, a.prsn_id, ly_mjr_spclty_cd, ly_mjr_spclty_desc_txt
+		from sas.customer a
+		join sas.bia_hcp_consent_attributes b
+		on a.prsn_id = b.prsn_id and upper(mlr_app_brand_prim_spec) like '%ZEPBOUND%'
+		union
+		select 'CMH' as bu,'MOUNJARO' as brand, a.prsn_id, ly_mjr_spclty_cd, ly_mjr_spclty_desc_txt
+		from sas.customer a
+		join sas.bia_hcp_consent_attributes b
+		on a.prsn_id = b.prsn_id and upper(mlr_app_brand_prim_spec) like '%MOUNJARO%'
+		union
+		select 'IMBU' as bu,'TALTZ' as brand, a.prsn_id, ly_mjr_spclty_cd, ly_mjr_spclty_desc_txt
+		from sas.customer a
+		join sas.bia_hcp_consent_attributes b
+		on a.prsn_id = b.prsn_id and upper(mlr_app_brand_prim_spec) like '%TALTZ%'
+		union
+		select 'IMBU' as bu,'OMVOH' as brand, a.prsn_id, ly_mjr_spclty_cd, ly_mjr_spclty_desc_txt
+		from sas.customer a
+		join sas.bia_hcp_consent_attributes b
+		on a.prsn_id = b.prsn_id and upper(mlr_app_brand_prim_spec) like '%OMVOH%'
+		union
+		select 'IMBU' as bu,'EBGLYSS' as brand, a.prsn_id, ly_mjr_spclty_cd, ly_mjr_spclty_desc_txt
+		from sas.customer a
+		join sas.bia_hcp_consent_attributes b
+		on a.prsn_id = b.prsn_id and upper(mlr_app_brand_prim_spec) like '%EBGLYSS%'
+		union
+		select 'OBU' as bu,'JAYPIRCA' as brand, a.prsn_id, ly_mjr_spclty_cd, ly_mjr_spclty_desc_txt
+		from sas.customer a
+		join sas.bia_hcp_consent_attributes b
+		on a.prsn_id = b.prsn_id and upper(mlr_app_brand_all_spec) like '%JAYPIRCA%'
+		union
+		select 'OBU' as bu,'VERZENIO' as brand, a.prsn_id, ly_mjr_spclty_cd, ly_mjr_spclty_desc_txt
+		from sas.customer a
+		join sas.bia_hcp_consent_attributes b
+		on a.prsn_id = b.prsn_id and upper(mlr_app_brand_all_spec) like '%VERZENIO%'
+		union
+		select 'NBU' as bu,'KISUNLA' as brand, a.prsn_id, ly_mjr_spclty_cd, ly_mjr_spclty_desc_txt
+		from sas.customer a
+		join sas.bia_hcp_consent_attributes b
+		on a.prsn_id = b.prsn_id and upper(mlr_app_brand_prim_spec) like '%KISUNLA%'
+	)
+,
+cte_target as
+	(
+		select distinct a.bu, a.brand, ly_mjr_spclty_cd, ly_mjr_spclty_desc_txt, prsn_id
+		from cte_mlr_prsn a join bia.bia_omnichannel_target b
+		on a.prsn_id = b.lilly_prsn_id and upper(a.brand) = upper(b.brand)
+	)
+,
+cte_imm_taltz_mkt as
+	(
+		select claim_id, prsn_id, service_date, brand_name,
+		greatest(psoriasis_new_to_brand_flag, psoriatic_arthritis_new_to_brand_flag) as pso_psa_new_to_brand_flag
+		from apld_ex.laad_autoimmune_masterdata
+		where service_date between '2024-04-01' and '2025-03-31'
+		and (psoriasis_trx > 0 or psoriatic_arthritis_trx > 0)
+	),
+cte_mktnbrx_prsn as
+	(
+		select 'CMH' as bu, 'ZEPBOUND' as brand_name, 'Injectables OMM' as Mkt_name ,prsn_id, sum(new_to_brand_flag) as mkt_nbrx
+		from apld_ex.laad_obesity_masterdata
+		where service_date between '2024-04-01' and '2025-03-31' and class = 'INJ_AOM'
+		group by 1,2,3,4
+		union
+		select 'CMH' as bu, 'MOUNJARO' as brand_name, 'GLP Injectables' as mkt_name, prsn_id, sum(new_to_brand_flag) as mkt_nbrx
+		from apld_ex.laad_diabetes_masterdata
+		where service_date between '2024-04-01' and '2025-03-31' and glp_inj_flag = '1'
+		group by 1,2,3,4
+		union
+		select 'IMBU' as bu, 'EBGLYSS' as brand_name, 'Atopic Derm' as mkt_name, prsn_id, sum(atopic_derm_new_to_brand_flag) as mkt_nbrx
+		from apld_ex.laad_autoimmune_masterdata
+		where service_date between '2024-04-01' and '2025-03-31' and atopic_derm_trx > 0
+		group by 1,2,3,4
+		union
+		select 'IMBU' as bu, 'TALTZ' as brand_name, 'PSO/PSA' as mkt_name, prsn_id, sum(pso_psa_new_to_brand_flag) as mkt_nbrx
+		from cte_imm_taltz_mkt
+		where service_date between '2024-04-01' and '2025-03-31'
+		group by 1,2,3,4
+		union
+		select 'IMBU' as bu, 'OMVOH' as brand_name, 'IBD' as mkt_name, prsn_id, sum(inflammatory_bowel_disease_new_to_brand_flag) as mkt_nbrx
+		from apld_ex.laad_autoimmune_masterdata
+		where service_date between '2024-04-01' and '2025-03-31' and inflammatory_bowel_disease_trx > 0
+		group by 1,2,3,4
+		union
+		select 'OBU' as bu, 'VERZENIO' as brand_name, 'Breast Cancer' as mkt_name, prsn_id, sum(new_to_brand_flag) as mkt_nbrx
+		from apld_ex.laad_oncology_masterdata
+		where service_date between '2024-04-01' and '2025-03-31' and br_pat_rec_freq_flag is not null and upper(class) like '%BREAST%'
+		group by 1,2,3,4
+		union
+		select 'OBU' as bu, 'JAYPIRCA' as brand_name, 'CLL-MCL' as mkt_name, prsn_id, sum(new_to_brand_flag) as mkt_nbrx
+		from apld_ex.laad_oncology_masterdata
+		where service_date between '2024-04-01' and '2025-03-31'
+		and ((upper(class) like '%CLL%' and cll_pat_rec_freq_flag is not null) or (upper(class) like '%MCL%' and mcl_pat_rec_freq_flag is not null))
+		group by 1,2,3,4
+		union
+		select 'NBU' as bu, 'KISUNLA' as brand_name, 'ATT' as mkt_name,prsn_id, sum(nbrx) as mkt_nbrx
+		from neuro.alz_ad_apld_masterdata
+		where service_date between '2024-04-01' and '2025-03-31'
+		and (upper(id_desc) like '%KISUNLA%' or upper(id_desc) like '%LEQEMBI%') and market_basket_1 ='ATT'
+		group by 1,2,3,4
+	),
+cte_mlrhcp_nbrx_joined as
+	(
+		select a.bu as bu, a.brand as brand,
+		a.ly_mjr_spclty_cd as spec_cd, a.ly_mjr_spclty_desc_txt as spec_desc,
+		count(distinct a.prsn_id) as mlr_apv_hcp_ct,
+		count(distinct c.prsn_id) as target_hcp_ct,
+		coalesce(sum(mkt_nbrx),0) as mkt_nbrx_12mth
+		from cte_mlr_prsn a
+		left join cte_mktnbrx_prsn b
+		on a.prsn_id = b.prsn_id and upper(a.brand) = upper(b.brand_name)
+		left join cte_target c
+		on a.prsn_id = c.prsn_id and upper(a.brand) = upper(c.brand)
+		group by 1,2,3,4
+	)
+	select bu,
+	case
+	when brand = 'MOUNJARO' then 'GLP Inj' when brand = 'ZEPBOUND' then 'Injectable AOM'
+	when brand = 'VERZENIO' then 'Breast Cancer' when brand = 'JAYPIRCA' then 'CLL, MCL'
+	when brand = 'EBGLYSS' then 'Atopic Derm' when brand = 'OMVOH' then 'IBD'
+	when brand = 'TALTZ' then 'PSO, PSA' when brand = 'KISUNLA' then 'ATT'
+	end as market,
+	brand, spec_cd, spec_desc, '' as sf_aprv_spec_flag, mlr_apv_hcp_ct, target_hcp_ct, mkt_nbrx_12mth,
+	coalesce(cast(mkt_nbrx_12mth as float)/cast(nullif((sum(mkt_nbrx_12mth) over(partition by spec_cd, spec_desc)),0) as float),0) as nbrx_split_by_brand_pct,
+	coalesce(cast(mkt_nbrx_12mth as float)/cast(nullif((sum(mkt_nbrx_12mth) over(partition by bu, brand)),0) as float),0) as nbrx_split_by_spec_pct
+	from cte_mlrhcp_nbrx_joined
+	order by bu, brand, mkt_nbrx_12mth desc
